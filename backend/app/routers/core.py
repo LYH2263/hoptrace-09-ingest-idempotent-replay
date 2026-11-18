@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.db import connect
+from app.modules import ingest_idempotent_replay as replay
 from app.services import ingest as ingest_svc
 from app.services import timeline as timeline_svc
 
@@ -83,8 +84,36 @@ def list_sidecar():
 
 
 @router.post("/ingest/run")
-def run_ingest():
-    return ingest_svc.run_batch()
+def run_ingest(payload: dict | None = None):
+    return ingest_svc.run_batch(payload)
+
+
+@router.get("/ingest/receipts")
+def ingest_receipts(business_key: str | None = None):
+    return ingest_svc.list_receipts(business_key)
+
+
+@router.get("/ingest/runs")
+def ingest_runs(batch_id: str | None = None):
+    return ingest_svc.list_runs(batch_id)
+
+
+@router.get("/ingest/proofs")
+def ingest_proofs(
+    batch_id: str | None = None,
+    run_id: str | None = None,
+    action: str | None = None,
+):
+    """幂等证明只读接口：默认按批次查询，返回证明明细与轮次汇总。"""
+    try:
+        result = ingest_svc.query_proofs(batch_id=batch_id, run_id=run_id, action=action)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except replay.IdempotencyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "查询失败")
+    return result
 
 
 @router.get("/status-proofs")
